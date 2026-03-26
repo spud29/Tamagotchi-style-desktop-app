@@ -8,6 +8,7 @@ interface StatsPanelProps {
   ageMinutes: number;
   visible: boolean;
   position: { x: number; y: number };
+  evolutionProgress?: number;
 }
 
 /** Stat bar color based on value */
@@ -48,6 +49,7 @@ export function StatsPanel({
   ageMinutes,
   visible,
   position,
+  evolutionProgress,
 }: StatsPanelProps): React.ReactElement | null {
   if (!visible) return null;
 
@@ -90,6 +92,42 @@ export function StatsPanel({
           {lifeStage.charAt(0).toUpperCase() + lifeStage.slice(1)} · {formatAge(ageMinutes)}
         </div>
       </div>
+
+      {/* Evolution progress */}
+      {evolutionProgress !== undefined && evolutionProgress < 100 && lifeStage !== 'ghost' && (
+        <div style={{ marginBottom: 8 }}>
+          <div
+            style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              marginBottom: 2,
+            }}
+          >
+            <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.7)' }}>Evolution</span>
+            <span style={{ fontSize: 11, color: '#CE93D8', fontWeight: 600 }}>{evolutionProgress}%</span>
+          </div>
+          <div
+            style={{
+              width: '100%',
+              height: 6,
+              background: 'rgba(255,255,255,0.1)',
+              borderRadius: 3,
+              overflow: 'hidden',
+            }}
+          >
+            <div
+              style={{
+                width: `${evolutionProgress}%`,
+                height: '100%',
+                background: 'linear-gradient(90deg, #CE93D8, #AB47BC)',
+                borderRadius: 3,
+                transition: 'width 0.5s ease',
+              }}
+            />
+          </div>
+        </div>
+      )}
 
       {/* Stat bars */}
       {(Object.keys(STAT_LABELS) as (keyof PetStats)[]).map((statKey) => {

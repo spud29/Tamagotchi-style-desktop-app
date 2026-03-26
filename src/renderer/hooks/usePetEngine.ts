@@ -2,6 +2,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { PetStateMachine } from '../../engine/PetStateMachine';
 import { StatsManager } from '../../engine/StatsManager';
 import { GameClock } from '../../engine/GameClock';
+import { EvolutionManager } from '../../engine/EvolutionManager';
+import { CareTracker } from '../../engine/CareTracker';
 import { AnimationPlayer } from '../../sprites/AnimationPlayer';
 import { SpriteSheet } from '../../sprites/SpriteSheet';
 import {
@@ -11,7 +13,8 @@ import {
   PetSaveData,
   SpriteSheetConfig,
   AnimationDef,
-  StatDecayRates,
+  LifeStage,
+  LifeStageConfig,
 } from '../../engine/types';
 
 export interface PetEngineState {
@@ -21,25 +24,21 @@ export interface PetEngineState {
   stats: PetStats;
   ageMinutes: number;
   isAlive: boolean;
+  lifeStage: LifeStage;
+  petSize: number;
+  evolutionProgress: number;
 }
 
 interface UsePetEngineReturn {
   petState: PetEngineState;
   canvasRef: React.RefObject<HTMLCanvasElement | null>;
   isLoaded: boolean;
-  /** Feed the pet */
   feed: () => void;
-  /** Put the pet to sleep */
   sleep: () => void;
-  /** Clean the pet */
   clean: () => void;
-  /** Play with the pet */
   play: () => void;
-  /** Give medicine */
   medicine: () => void;
-  /** Get save data snapshot */
   getSaveData: () => PetSaveData | null;
-  /** Load from save data */
   loadSaveData: (data: PetSaveData) => void;
 }
 
@@ -53,14 +52,14 @@ const DEFAULT_STATS: PetStats = {
 
 /**
  * Main game loop hook.
- * Manages the pet state machine, stats, animation, clock, and rendering loop.
+ * Manages state machine, stats, animation, clock, evolution, care tracking, and rendering.
  */
 export function usePetEngine(
   spriteSheetConfig: SpriteSheetConfig,
   animations: Record<string, AnimationDef>,
   getAnimationName: (state: string, direction?: string) => string,
-  petSize: number,
-  decayRates: StatDecayRates
+  defaultPetSize: number,
+  lifeStageConfigs: Record<LifeStage, LifeStageConfig>
 ): UsePetEngineReturn {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const spriteSheetRef = useRef<SpriteSheet | null>(null);
@@ -68,18 +67,24 @@ export function usePetEngine(
   const stateMachineRef = useRef<PetStateMachine | null>(null);
   const statsManagerRef = useRef<StatsManager | null>(null);
   const gameClockRef = useRef<GameClock | null>(null);
+  const evolutionRef = useRef<EvolutionManager | null>(null);
+  const careTrackerRef = useRef<CareTracker | null>(null);
   const animFrameRef = useRef<number>(0);
   const lastTimeRef = useRef<number>(0);
   const saveTimerRef = useRef<number>(0);
+  const evolCheckTimerRef = useRef<number>(0);
 
   const [isLoaded, setIsLoaded] = useState(false);
   const [petState, setPetState] = useState<PetEngineState>({
     position: { x: 400, y: 400 },
-    state: 'IDLE',
+    state: 'EGG',
     direction: 'front',
     stats: { ...DEFAULT_STATS },
     ageMinutes: 0,
     isAlive: true,
+    lifeStage: 'egg',
+    petSize: lifeStageConfigs.egg.size.width,
+    evolutionProgress: 0,
   });
 
   const petStateRef = useRef(petState);
@@ -87,18 +92,30 @@ export function usePetEngine(
 
   const petIdRef = useRef<string>(crypto.randomUUID());
   const petNameRef = useRef<string>('Gloop');
+  const createdAtRef = useRef<string>(new Date().toISOString());
 
   // Initialize all systems
   useEffect(() => {
     const sheet = new SpriteSheet(spriteSheetConfig);
     const player = new AnimationPlayer(sheet, animations);
-    const statsManager = new StatsManager(undefined, decayRates);
+    const eggDecay = lifeStageConfigs.egg.statDecayRates;
+    const statsManager = new StatsManager(undefined, eggDecay);
     const gameClock = new GameClock();
+    const evolution = new EvolutionManager(lifeStageConfigs, 'egg');
+    const careTracker = new CareTracker();
 
     spriteSheetRef.current = sheet;
     animPlayerRef.current = player;
     statsManagerRef.current = statsManager;
     gameClockRef.current = gameClock;
+    evolutionRef.current = evolution;
+    careTrackerRef.current = careTracker;
+
+    // When evolution occurs, update decay rates for new stage
+    evolution.setOnEvolve((newStage) => {
+      const config = lifeStageConfigs[newStage];
+      statsManager.setDecayRates(config.statDecayRates);
+    });
 
     const initEngine = async () => {
       try {
@@ -111,20 +128,22 @@ export function usePetEngine(
           screenHeight = size.height;
         }
 
+        const eggSize = lifeStageConfigs.egg.size.width;
         const sm = new PetStateMachine(screenWidth, screenHeight);
-        sm.setPetSize(petSize);
+        sm.setPetSize(eggSize);
+        sm.forceState('EGG');
         stateMachineRef.current = sm;
 
         setPetState((prev) => ({
           ...prev,
           position: {
-            x: screenWidth / 2 - petSize / 2,
-            y: screenHeight / 2 - petSize / 2,
+            x: screenWidth / 2 - eggSize / 2,
+            y: screenHeight / 2 - eggSize / 2,
           },
         }));
 
         await sheet.load();
-        player.play(getAnimationName('idle', 'front'));
+        player.play(getAnimationName('egg_idle'));
         setIsLoaded(true);
       } catch (err) {
         console.error('Failed to initialize pet engine:', err);
@@ -139,7 +158,7 @@ export function usePetEngine(
         cancelAnimationFrame(animFrameRef.current);
       }
     };
-  }, [spriteSheetConfig, animations, getAnimationName, petSize, decayRates]);
+  }, [spriteSheetConfig, animations, getAnimationName, defaultPetSize, lifeStageConfigs]);
 
   // Main game loop
   useEffect(() => {
@@ -156,8 +175,10 @@ export function usePetEngine(
       const canvas = canvasRef.current;
       const statsManager = statsManagerRef.current;
       const gameClock = gameClockRef.current;
+      const evolution = evolutionRef.current;
+      const careTracker = careTrackerRef.current;
 
-      if (!sm || !player || !canvas || !statsManager || !gameClock) {
+      if (!sm || !player || !canvas || !statsManager || !gameClock || !evolution || !careTracker) {
         animFrameRef.current = requestAnimationFrame(gameLoop);
         return;
       }
@@ -168,22 +189,58 @@ export function usePetEngine(
         return;
       }
 
+      const currentStage = evolution.getStage();
+
       // Update game clock
       gameClock.update(deltaTime);
 
-      // Update stats (decay)
-      const currentState = sm.getState();
-      if (currentState === 'SLEEPING') {
-        // During sleep, pause decay and recover energy
-        statsManager.pause();
-        statsManager.modifyStat('energy', 8 * deltaTime); // Recover ~8/sec while sleeping
-      } else {
-        statsManager.resume();
-        statsManager.update(deltaTime);
+      // Egg state: no stat decay, just wait for hatching
+      if (currentStage !== 'egg' && currentStage !== 'ghost') {
+        // Update stats (decay)
+        const currentState = sm.getState();
+        if (currentState === 'SLEEPING') {
+          statsManager.pause();
+          statsManager.modifyStat('energy', 8 * deltaTime);
+        } else {
+          statsManager.resume();
+          statsManager.update(deltaTime);
+        }
+
+        // Update care tracker
+        careTracker.update(deltaTime, statsManager.getStats());
+
+        // Check for neglect (any stat at 0)
+        const stats = statsManager.getStats();
+        if (Object.values(stats).some((v) => v <= 0)) {
+          careTracker.recordNeglect();
+        }
+
+        // Feed stats to state machine
+        sm.setStats(statsManager.getStats());
       }
 
-      // Feed stats to state machine for stat-driven transitions
-      sm.setStats(statsManager.getStats());
+      // Check evolution every 5 seconds
+      evolCheckTimerRef.current += deltaTime;
+      if (evolCheckTimerRef.current >= 5) {
+        evolCheckTimerRef.current = 0;
+
+        const ageMinutes = gameClock.getAgeMinutes();
+        const careHistory = careTracker.getHistory();
+        const evolved = evolution.checkEvolution(ageMinutes, careHistory);
+
+        if (evolved) {
+          const newStage = evolution.getStage();
+          const newSize = evolution.getPetSize();
+          sm.setPetSize(newSize.width);
+
+          // After hatching from egg, transition to IDLE
+          if (newStage === 'baby') {
+            sm.forceState('HAPPY'); // Celebrate hatching
+          } else {
+            sm.forceState('HAPPY'); // Celebrate evolution
+          }
+        }
+      }
 
       // Update state machine
       const currentPos = petStateRef.current.position;
@@ -191,16 +248,23 @@ export function usePetEngine(
       const newState = sm.getState();
       const currentDir = sm.getDirection();
 
-      // Map state machine state to animation name
-      const animState = mapStateToAnimation(newState);
+      // Map state to animation
+      const animState = currentStage === 'egg'
+        ? 'egg_idle'
+        : mapStateToAnimation(newState);
       const animName = getAnimationName(animState, currentDir);
       player.play(animName);
       player.update(deltaTime);
 
-      // Build updated pet state
+      // Current pet size from evolution stage
+      const currentPetSize = evolution.getPetSize().width;
       const updatedStats = statsManager.getStats();
       const updatedAge = gameClock.getAgeMinutes();
       const isAlive = !statsManager.isDead();
+      const evoProgress = evolution.getEvolutionProgress(
+        updatedAge,
+        careTracker.getCareScore()
+      );
 
       // Update React state
       const pos = newPos ?? currentPos;
@@ -211,15 +275,18 @@ export function usePetEngine(
         stats: updatedStats,
         ageMinutes: updatedAge,
         isAlive,
+        lifeStage: currentStage,
+        petSize: currentPetSize,
+        evolutionProgress: evoProgress,
       });
 
       // Render
       ctx.clearRect(0, 0, canvas.width, canvas.height);
 
       if (sheet?.isLoaded()) {
-        player.draw(ctx, pos.x, pos.y, petSize, petSize);
+        player.draw(ctx, pos.x, pos.y, currentPetSize, currentPetSize);
       } else {
-        drawPlaceholderPet(ctx, pos.x, pos.y, petSize, newState);
+        drawPlaceholderPet(ctx, pos.x, pos.y, currentPetSize, newState, currentStage);
       }
 
       // Auto-save every 30 seconds
@@ -239,9 +306,8 @@ export function usePetEngine(
         cancelAnimationFrame(animFrameRef.current);
       }
     };
-  }, [isLoaded, getAnimationName, petSize]);
+  }, [isLoaded, getAnimationName, defaultPetSize]);
 
-  // Auto-save function
   const autoSave = useCallback(() => {
     const saveData = buildSaveData();
     if (saveData && window.electronAPI) {
@@ -249,11 +315,12 @@ export function usePetEngine(
     }
   }, []);
 
-  // Build save data from current state
   const buildSaveData = useCallback((): PetSaveData | null => {
     const stats = statsManagerRef.current;
     const clock = gameClockRef.current;
-    if (!stats || !clock) return null;
+    const evolution = evolutionRef.current;
+    const careTracker = careTrackerRef.current;
+    if (!stats || !clock || !evolution || !careTracker) return null;
 
     clock.markSaved();
 
@@ -261,42 +328,56 @@ export function usePetEngine(
       id: petIdRef.current,
       speciesId: 'gloop',
       name: petNameRef.current,
-      lifeStage: 'baby', // Will be driven by EvolutionManager in Phase 4
+      lifeStage: evolution.getStage(),
       stats: stats.getStats(),
-      careHistory: {
-        totalFeedings: 0,
-        totalPlaySessions: 0,
-        totalCleanings: 0,
-        neglectEvents: 0,
-        averageCareScore: stats.getAverageScore(),
-      },
+      careHistory: careTracker.getHistory(),
       ageMinutes: clock.getAgeMinutes(),
       lastSavedAt: clock.getLastSavedAt(),
       position: petStateRef.current.position,
       isAlive: !stats.isDead(),
-      createdAt: new Date().toISOString(),
+      createdAt: createdAtRef.current,
     };
   }, []);
 
-  // Load from save data
   const loadSaveData = useCallback((data: PetSaveData) => {
     const stats = statsManagerRef.current;
     const clock = gameClockRef.current;
     const sm = stateMachineRef.current;
-    if (!stats || !clock || !sm) return;
+    const evolution = evolutionRef.current;
+    const careTracker = careTrackerRef.current;
+    if (!stats || !clock || !sm || !evolution || !careTracker) return;
 
     petIdRef.current = data.id;
     petNameRef.current = data.name;
+    createdAtRef.current = data.createdAt;
 
+    // Restore evolution stage
+    evolution.setStage(data.lifeStage);
+    const stageConfig = evolution.getCurrentConfig();
+    stats.setDecayRates(stageConfig.statDecayRates);
+    sm.setPetSize(stageConfig.size.width);
+
+    // Restore stats and care history
     stats.setAllStats(data.stats);
+    careTracker.loadHistory(data.careHistory);
     clock.setLastSavedAt(data.lastSavedAt);
     clock.setAgeMinutes(data.ageMinutes);
 
-    // Calculate and apply offline decay
+    // Calculate and apply offline decay (skip for eggs)
     const offlineSeconds = clock.getOfflineElapsedSeconds();
-    if (offlineSeconds > 60) {
+    if (offlineSeconds > 60 && data.lifeStage !== 'egg') {
       stats.applyOfflineDecay(offlineSeconds);
       clock.addOfflineAge(offlineSeconds);
+    }
+
+    // Set appropriate initial state
+    if (!data.isAlive) {
+      sm.forceState('GHOST');
+      evolution.setStage('ghost');
+    } else if (data.lifeStage === 'egg') {
+      sm.forceState('EGG');
+    } else {
+      sm.forceState('IDLE');
     }
 
     setPetState((prev) => ({
@@ -305,29 +386,31 @@ export function usePetEngine(
       stats: stats.getStats(),
       ageMinutes: clock.getAgeMinutes(),
       isAlive: data.isAlive,
+      lifeStage: data.lifeStage,
+      petSize: stageConfig.size.width,
     }));
-
-    if (!data.isAlive) {
-      sm.forceState('GHOST');
-    }
   }, []);
 
-  // --- Pet interaction actions ---
+  // --- Pet interactions (blocked during egg state) ---
 
   const feed = useCallback(() => {
     const stats = statsManagerRef.current;
     const sm = stateMachineRef.current;
-    if (!stats || !sm) return;
-    if (sm.getState() === 'GHOST') return;
+    const evolution = evolutionRef.current;
+    const care = careTrackerRef.current;
+    if (!stats || !sm || !evolution || !care) return;
+    if (sm.getState() === 'GHOST' || evolution.getStage() === 'egg') return;
 
     stats.modifyStat('hunger', 25);
+    care.recordFeeding();
     sm.forceState('EATING');
   }, []);
 
   const sleep = useCallback(() => {
     const sm = stateMachineRef.current;
-    if (!sm) return;
-    if (sm.getState() === 'GHOST') return;
+    const evolution = evolutionRef.current;
+    if (!sm || !evolution) return;
+    if (sm.getState() === 'GHOST' || evolution.getStage() === 'egg') return;
 
     sm.forceState('SLEEPING');
   }, []);
@@ -335,29 +418,36 @@ export function usePetEngine(
   const clean = useCallback(() => {
     const stats = statsManagerRef.current;
     const sm = stateMachineRef.current;
-    if (!stats || !sm) return;
-    if (sm.getState() === 'GHOST') return;
+    const evolution = evolutionRef.current;
+    const care = careTrackerRef.current;
+    if (!stats || !sm || !evolution || !care) return;
+    if (sm.getState() === 'GHOST' || evolution.getStage() === 'egg') return;
 
     stats.modifyStat('cleanliness', 30);
+    care.recordCleaning();
     sm.forceState('HAPPY');
   }, []);
 
   const play = useCallback(() => {
     const stats = statsManagerRef.current;
     const sm = stateMachineRef.current;
-    if (!stats || !sm) return;
-    if (sm.getState() === 'GHOST') return;
+    const evolution = evolutionRef.current;
+    const care = careTrackerRef.current;
+    if (!stats || !sm || !evolution || !care) return;
+    if (sm.getState() === 'GHOST' || evolution.getStage() === 'egg') return;
 
     stats.modifyStat('happiness', 20);
     stats.modifyStat('energy', -10);
+    care.recordPlay();
     sm.forceState('HAPPY');
   }, []);
 
   const medicine = useCallback(() => {
     const stats = statsManagerRef.current;
     const sm = stateMachineRef.current;
-    if (!stats || !sm) return;
-    if (sm.getState() === 'GHOST') return;
+    const evolution = evolutionRef.current;
+    if (!stats || !sm || !evolution) return;
+    if (sm.getState() === 'GHOST' || evolution.getStage() === 'egg') return;
 
     stats.modifyStat('health', 30);
     sm.forceState('HAPPY');
@@ -381,27 +471,18 @@ export function usePetEngine(
   };
 }
 
-/** Map PetState enum to animation state string */
 function mapStateToAnimation(state: PetState): string {
   switch (state) {
-    case 'IDLE':
-      return 'idle';
-    case 'WALKING':
-      return 'walk';
-    case 'SLEEPING':
-      return 'sleep';
-    case 'EATING':
-      return 'eating';
-    case 'HAPPY':
-      return 'happy';
-    case 'SAD':
-      return 'sad';
-    case 'SICK':
-      return 'sick';
-    case 'GHOST':
-      return 'ghost';
-    default:
-      return 'idle';
+    case 'EGG': return 'egg_idle';
+    case 'IDLE': return 'idle';
+    case 'WALKING': return 'walk';
+    case 'SLEEPING': return 'sleep';
+    case 'EATING': return 'eating';
+    case 'HAPPY': return 'happy';
+    case 'SAD': return 'sad';
+    case 'SICK': return 'sick';
+    case 'GHOST': return 'ghost';
+    default: return 'idle';
   }
 }
 
@@ -411,13 +492,37 @@ function drawPlaceholderPet(
   x: number,
   y: number,
   size: number,
-  state: PetState
+  state: PetState,
+  lifeStage: LifeStage
 ): void {
   const centerX = x + size / 2;
   const centerY = y + size / 2;
   const radius = size / 2;
 
-  // Ghost state: semi-transparent white
+  // Egg: simple oval
+  if (lifeStage === 'egg' || state === 'EGG') {
+    ctx.fillStyle = '#FFFDE7';
+    ctx.beginPath();
+    ctx.ellipse(centerX, centerY, radius * 0.7, radius * 0.9, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = '#FDD835';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.ellipse(centerX, centerY, radius * 0.7, radius * 0.9, 0, 0, Math.PI * 2);
+    ctx.stroke();
+
+    // Crack lines
+    ctx.strokeStyle = '#E0E0E0';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(centerX - radius * 0.15, centerY);
+    ctx.lineTo(centerX + radius * 0.1, centerY - radius * 0.2);
+    ctx.lineTo(centerX - radius * 0.05, centerY - radius * 0.4);
+    ctx.stroke();
+    return;
+  }
+
+  // Ghost
   if (state === 'GHOST') {
     ctx.globalAlpha = 0.5;
     ctx.fillStyle = '#FFFFFF';
@@ -425,8 +530,6 @@ function drawPlaceholderPet(
     ctx.arc(centerX, centerY, radius, 0, Math.PI * 2);
     ctx.fill();
     ctx.globalAlpha = 1;
-
-    // Ghost eyes
     ctx.fillStyle = '#333';
     ctx.beginPath();
     ctx.arc(centerX - radius * 0.25, centerY - radius * 0.15, radius * 0.1, 0, Math.PI * 2);
@@ -435,21 +538,26 @@ function drawPlaceholderPet(
     return;
   }
 
-  // Body color based on state
+  // Body color by state
   let bodyColor = '#4FC3F7';
-  if (state === 'SICK') bodyColor = '#A5D6A7'; // green tint
-  if (state === 'SAD') bodyColor = '#90CAF9'; // more blue
-  if (state === 'SLEEPING') bodyColor = '#7986CB'; // purple tint
+  if (state === 'SICK') bodyColor = '#A5D6A7';
+  if (state === 'SAD') bodyColor = '#90CAF9';
+  if (state === 'SLEEPING') bodyColor = '#7986CB';
 
+  // Size varies by life stage (drawn at the passed-in size already)
   ctx.fillStyle = bodyColor;
   ctx.beginPath();
   ctx.arc(centerX, centerY, radius, 0, Math.PI * 2);
   ctx.fill();
 
+  // Baby: bigger eyes, no antennae
+  const isBaby = lifeStage === 'baby';
+  const eyeSize = isBaby ? radius * 0.16 : radius * 0.12;
+  const eyeSpread = isBaby ? radius * 0.2 : radius * 0.25;
+
   // Eyes
   ctx.fillStyle = '#1A237E';
   if (state === 'SLEEPING') {
-    // Closed eyes (lines)
     ctx.strokeStyle = '#1A237E';
     ctx.lineWidth = 2;
     ctx.beginPath();
@@ -458,8 +566,6 @@ function drawPlaceholderPet(
     ctx.moveTo(centerX + radius * 0.15, centerY - radius * 0.15);
     ctx.lineTo(centerX + radius * 0.35, centerY - radius * 0.15);
     ctx.stroke();
-
-    // Zzz
     ctx.fillStyle = '#FFF';
     ctx.font = `${radius * 0.4}px monospace`;
     ctx.fillText('z', centerX + radius * 0.6, centerY - radius * 0.5);
@@ -467,38 +573,50 @@ function drawPlaceholderPet(
     ctx.fillText('Z', centerX + radius * 0.8, centerY - radius * 0.9);
   } else {
     ctx.beginPath();
-    ctx.arc(centerX - radius * 0.25, centerY - radius * 0.15, radius * 0.12, 0, Math.PI * 2);
-    ctx.arc(centerX + radius * 0.25, centerY - radius * 0.15, radius * 0.12, 0, Math.PI * 2);
+    ctx.arc(centerX - eyeSpread, centerY - radius * 0.15, eyeSize, 0, Math.PI * 2);
+    ctx.arc(centerX + eyeSpread, centerY - radius * 0.15, eyeSize, 0, Math.PI * 2);
     ctx.fill();
   }
 
   // Mouth
-  ctx.strokeStyle = '#1A237E';
-  ctx.lineWidth = 2;
-  ctx.beginPath();
-  if (state === 'HAPPY' || state === 'EATING') {
-    ctx.arc(centerX, centerY + radius * 0.1, radius * 0.25, 0, Math.PI);
-  } else if (state === 'SAD' || state === 'SICK') {
-    ctx.arc(centerX, centerY + radius * 0.3, radius * 0.2, Math.PI, 0);
-  } else if (state !== 'SLEEPING') {
-    ctx.arc(centerX, centerY + radius * 0.1, radius * 0.2, 0, Math.PI);
+  if (state !== 'SLEEPING') {
+    ctx.strokeStyle = '#1A237E';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    if (state === 'HAPPY' || state === 'EATING') {
+      ctx.arc(centerX, centerY + radius * 0.1, radius * 0.25, 0, Math.PI);
+    } else if (state === 'SAD' || state === 'SICK') {
+      ctx.arc(centerX, centerY + radius * 0.3, radius * 0.2, Math.PI, 0);
+    } else {
+      ctx.arc(centerX, centerY + radius * 0.1, radius * 0.2, 0, Math.PI);
+    }
+    ctx.stroke();
   }
-  ctx.stroke();
 
-  // Antennae
-  ctx.strokeStyle = bodyColor;
-  ctx.lineWidth = 2;
-  ctx.beginPath();
-  ctx.moveTo(centerX - radius * 0.3, centerY - radius * 0.8);
-  ctx.lineTo(centerX - radius * 0.5, centerY - radius * 1.3);
-  ctx.moveTo(centerX + radius * 0.3, centerY - radius * 0.8);
-  ctx.lineTo(centerX + radius * 0.5, centerY - radius * 1.3);
-  ctx.stroke();
+  // Antennae (teen and adult only)
+  if (lifeStage === 'teen' || lifeStage === 'adult') {
+    ctx.strokeStyle = bodyColor;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(centerX - radius * 0.3, centerY - radius * 0.8);
+    ctx.lineTo(centerX - radius * 0.5, centerY - radius * 1.3);
+    ctx.moveTo(centerX + radius * 0.3, centerY - radius * 0.8);
+    ctx.lineTo(centerX + radius * 0.5, centerY - radius * 1.3);
+    ctx.stroke();
 
-  // Antenna tips
-  ctx.fillStyle = '#FDD835';
-  ctx.beginPath();
-  ctx.arc(centerX - radius * 0.5, centerY - radius * 1.3, 3, 0, Math.PI * 2);
-  ctx.arc(centerX + radius * 0.5, centerY - radius * 1.3, 3, 0, Math.PI * 2);
-  ctx.fill();
+    ctx.fillStyle = '#FDD835';
+    ctx.beginPath();
+    ctx.arc(centerX - radius * 0.5, centerY - radius * 1.3, 3, 0, Math.PI * 2);
+    ctx.arc(centerX + radius * 0.5, centerY - radius * 1.3, 3, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // Life stage indicator (small text below)
+  if (lifeStage !== 'adult') {
+    ctx.fillStyle = 'rgba(255,255,255,0.7)';
+    ctx.font = '9px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText(lifeStage, centerX, centerY + radius + 12);
+    ctx.textAlign = 'start';
+  }
 }

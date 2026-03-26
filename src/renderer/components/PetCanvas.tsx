@@ -5,14 +5,14 @@ import { ContextMenu, getDefaultMenuActions } from './ContextMenu';
 import { FeedingUI } from './FeedingUI';
 import { PoopManager } from './PoopManager';
 import { SpeechBubble } from './SpeechBubble';
-import { SpriteSheetConfig, AnimationDef, StatDecayRates } from '../../engine/types';
+import { SpriteSheetConfig, AnimationDef, LifeStage, LifeStageConfig } from '../../engine/types';
 
 interface PetCanvasProps {
   spriteSheetConfig: SpriteSheetConfig;
   animations: Record<string, AnimationDef>;
   getAnimationName: (state: string, direction?: string) => string;
   petSize: number;
-  decayRates: StatDecayRates;
+  lifeStageConfigs: Record<LifeStage, LifeStageConfig>;
   onClick?: () => void;
   showStats: boolean;
 }
@@ -26,7 +26,7 @@ export function PetCanvas({
   animations,
   getAnimationName,
   petSize,
-  decayRates,
+  lifeStageConfigs,
   onClick,
   showStats,
 }: PetCanvasProps): React.ReactElement {
@@ -41,7 +41,7 @@ export function PetCanvas({
     medicine,
     getSaveData,
     loadSaveData,
-  } = usePetEngine(spriteSheetConfig, animations, getAnimationName, petSize, decayRates);
+  } = usePetEngine(spriteSheetConfig, animations, getAnimationName, petSize, lifeStageConfigs);
 
   // UI state
   const [contextMenu, setContextMenu] = useState<{ visible: boolean; x: number; y: number }>({
@@ -52,9 +52,8 @@ export function PetCanvas({
   const [feedingMode, setFeedingMode] = useState(false);
   const [speechMessage, setSpeechMessage] = useState<string | null>(null);
 
-  // Speech bubble helper
   const showBubble = useCallback((msg: string) => {
-    setSpeechMessage(null); // Reset to trigger new message
+    setSpeechMessage(null);
     requestAnimationFrame(() => setSpeechMessage(msg));
   }, []);
 
@@ -101,7 +100,7 @@ export function PetCanvas({
     });
 
     return cleanup;
-  }, [feed, play, sleep]);
+  }, [feed, play, sleep, clean, medicine]);
 
   // Pet reactions based on state changes
   useEffect(() => {
@@ -121,14 +120,30 @@ export function PetCanvas({
     }
   }, [petState.state, showBubble]);
 
-  // Stat threshold reactions
+  // Evolution celebration
+  const prevStageRef = React.useRef(petState.lifeStage);
   useEffect(() => {
-    if (petState.stats.hunger <= 20 && petState.state === 'IDLE') {
+    if (petState.lifeStage !== prevStageRef.current) {
+      const prev = prevStageRef.current;
+      prevStageRef.current = petState.lifeStage;
+
+      if (prev === 'egg' && petState.lifeStage === 'baby') {
+        showBubble('🥚 I hatched!');
+      } else if (petState.lifeStage === 'teen') {
+        showBubble('🎉 I\'m a teenager now!');
+      } else if (petState.lifeStage === 'adult') {
+        showBubble('🎉 I\'m all grown up!');
+      }
+    }
+  }, [petState.lifeStage, showBubble]);
+
+  // Hunger warning
+  useEffect(() => {
+    if (petState.stats.hunger <= 20 && petState.state === 'IDLE' && petState.lifeStage !== 'egg') {
       showBubble('🍖 I\'m hungry!');
     }
-  }, [Math.floor(petState.stats.hunger / 10), petState.state, showBubble]);
+  }, [Math.floor(petState.stats.hunger / 10), petState.state, petState.lifeStage, showBubble]);
 
-  // Handle context menu action
   const handleMenuAction = useCallback(
     (action: string) => {
       switch (action) {
@@ -158,29 +173,23 @@ export function PetCanvas({
     [play, clean, medicine, sleep, onClick, showBubble]
   );
 
-  // Handle feeding from drag-food UI
-  const handleFeed = useCallback(
-    (hungerRestore: number) => {
-      const stats = petState.stats;
-      // Use the engine's feed which forces EATING state
-      feed();
-      // Apply the specific food's hunger restore
-      // (feed() gives +25, we adjust by the difference)
-      showBubble('😋 Yummy!');
-    },
-    [feed, showBubble, petState.stats]
-  );
+  const handleFeed = useCallback(() => {
+    feed();
+    showBubble('😋 Yummy!');
+  }, [feed, showBubble]);
 
-  // Handle poop cleaning
   const handleCleanPoop = useCallback(() => {
     clean();
     showBubble('✨ Clean!');
   }, [clean, showBubble]);
 
-  // Mouse events for click/right-click detection on pet
+  // Use dynamic pet size from evolution
+  const currentPetSize = petState.petSize;
+  const isEgg = petState.lifeStage === 'egg';
+
   const handleMouseMove = useCallback(
     (e: React.MouseEvent<HTMLCanvasElement>) => {
-      if (feedingMode) return; // Don't toggle pass-through during feeding
+      if (feedingMode) return;
 
       const canvas = canvasRef.current;
       if (!canvas) return;
@@ -191,15 +200,15 @@ export function PetCanvas({
 
       const isOverPet =
         mouseX >= petState.position.x &&
-        mouseX <= petState.position.x + petSize &&
+        mouseX <= petState.position.x + currentPetSize &&
         mouseY >= petState.position.y &&
-        mouseY <= petState.position.y + petSize;
+        mouseY <= petState.position.y + currentPetSize;
 
       if (window.electronAPI) {
         window.electronAPI.setIgnoreMouse(!isOverPet);
       }
     },
-    [petState.position, petSize, canvasRef, feedingMode]
+    [petState.position, currentPetSize, canvasRef, feedingMode]
   );
 
   const handleClick = useCallback(
@@ -213,17 +222,16 @@ export function PetCanvas({
 
       const isOverPet =
         mouseX >= petState.position.x &&
-        mouseX <= petState.position.x + petSize &&
+        mouseX <= petState.position.x + currentPetSize &&
         mouseY >= petState.position.y &&
-        mouseY <= petState.position.y + petSize;
+        mouseY <= petState.position.y + currentPetSize;
 
       if (isOverPet) {
-        // Close context menu if open
         setContextMenu((prev) => (prev.visible ? { ...prev, visible: false } : prev));
         onClick?.();
       }
     },
-    [petState.position, petSize, canvasRef, onClick]
+    [petState.position, currentPetSize, canvasRef, onClick]
   );
 
   const handleContextMenu = useCallback(
@@ -239,18 +247,17 @@ export function PetCanvas({
 
       const isOverPet =
         mouseX >= petState.position.x &&
-        mouseX <= petState.position.x + petSize &&
+        mouseX <= petState.position.x + currentPetSize &&
         mouseY >= petState.position.y &&
-        mouseY <= petState.position.y + petSize;
+        mouseY <= petState.position.y + currentPetSize;
 
       if (isOverPet) {
         setContextMenu({ visible: true, x: e.clientX, y: e.clientY });
       }
     },
-    [petState.position, petSize, canvasRef]
+    [petState.position, currentPetSize, canvasRef]
   );
 
-  // Set canvas to full window size
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -286,37 +293,40 @@ export function PetCanvas({
         }}
       />
 
-      {/* Poop spawning and cleaning */}
-      <PoopManager
-        petPosition={petState.position}
-        cleanlinessLevel={petState.stats.cleanliness}
-        onClean={handleCleanPoop}
-      />
+      {/* Poop spawning (not during egg stage) */}
+      {!isEgg && (
+        <PoopManager
+          petPosition={petState.position}
+          cleanlinessLevel={petState.stats.cleanliness}
+          onClean={handleCleanPoop}
+        />
+      )}
 
       {/* Speech bubble */}
       <SpeechBubble
         message={speechMessage}
         petPosition={petState.position}
-        petSize={petSize}
+        petSize={currentPetSize}
         onDismiss={() => setSpeechMessage(null)}
       />
 
-      {/* Stats panel */}
+      {/* Stats panel (shows evolution progress) */}
       <StatsPanel
         stats={petState.stats}
         petName="Gloop"
-        lifeStage="baby"
+        lifeStage={petState.lifeStage}
         ageMinutes={petState.ageMinutes}
         visible={showStats}
         position={petState.position}
+        evolutionProgress={petState.evolutionProgress}
       />
 
-      {/* Right-click context menu */}
+      {/* Right-click context menu (disabled during egg) */}
       <ContextMenu
         visible={contextMenu.visible}
         x={contextMenu.x}
         y={contextMenu.y}
-        actions={getDefaultMenuActions(isAlive, isSleeping)}
+        actions={getDefaultMenuActions(isAlive && !isEgg, isSleeping)}
         onAction={handleMenuAction}
         onClose={() => setContextMenu((prev) => ({ ...prev, visible: false }))}
       />
@@ -325,7 +335,7 @@ export function PetCanvas({
       <FeedingUI
         visible={feedingMode}
         petPosition={petState.position}
-        petSize={petSize}
+        petSize={currentPetSize}
         onFeed={handleFeed}
         onClose={() => setFeedingMode(false)}
       />
