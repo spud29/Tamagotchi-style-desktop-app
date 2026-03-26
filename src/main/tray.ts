@@ -4,13 +4,11 @@ import { join } from 'path';
 let tray: Tray | null = null;
 
 export function createTray(mainWindow: BrowserWindow): void {
-  // Create a simple 16x16 tray icon (placeholder until real icon exists)
   const iconPath = join(__dirname, '../../assets/icons/tray-icon.png');
   let icon: Electron.NativeImage;
   try {
     icon = nativeImage.createFromPath(iconPath);
   } catch {
-    // Fallback: create a tiny colored icon if file doesn't exist
     icon = nativeImage.createEmpty();
   }
 
@@ -35,8 +33,21 @@ export function createTray(mainWindow: BrowserWindow): void {
       click: () => mainWindow.webContents.send('tray-action', 'play'),
     },
     {
+      label: 'Clean',
+      click: () => mainWindow.webContents.send('tray-action', 'clean'),
+    },
+    {
+      label: 'Medicine',
+      click: () => mainWindow.webContents.send('tray-action', 'medicine'),
+    },
+    {
       label: 'Sleep',
       click: () => mainWindow.webContents.send('tray-action', 'sleep'),
+    },
+    { type: 'separator' },
+    {
+      label: 'Stats',
+      click: () => mainWindow.webContents.send('tray-action', 'stats'),
     },
     { type: 'separator' },
     {
