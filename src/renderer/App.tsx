@@ -1,18 +1,21 @@
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { PetCanvas } from './components/PetCanvas';
+import { StatsPanel } from './components/StatsPanel';
 
 // Import Gloop species to register it
 import { gloop } from '../species/gloop';
+import { gloopLifeStages } from '../species/gloop/stats';
 
 const gloopConfig = gloop.getConfig();
 const PET_SIZE = 64;
+const DECAY_RATES = gloopLifeStages.baby.statDecayRates;
 
 /**
  * Root application component.
- * Sets up the pet canvas with the Gloop species.
+ * Manages save/load lifecycle, stats panel, and tray action routing.
  */
 export function App(): React.ReactElement {
-  const [showDebug, setShowDebug] = useState(false);
+  const [showStats, setShowStats] = useState(false);
 
   const getAnimationName = useCallback(
     (state: string, direction?: string) => {
@@ -22,8 +25,7 @@ export function App(): React.ReactElement {
   );
 
   const handlePetClick = useCallback(() => {
-    // Toggle debug info on click (temporary for Phase 1)
-    setShowDebug((prev) => !prev);
+    setShowStats((prev) => !prev);
   }, []);
 
   return (
@@ -33,29 +35,10 @@ export function App(): React.ReactElement {
         animations={gloopConfig.animations}
         getAnimationName={getAnimationName}
         petSize={PET_SIZE}
+        decayRates={DECAY_RATES}
         onClick={handlePetClick}
+        showStats={showStats}
       />
-      {showDebug && (
-        <div
-          style={{
-            position: 'fixed',
-            bottom: 16,
-            left: 16,
-            background: 'rgba(0, 0, 0, 0.75)',
-            color: '#4FC3F7',
-            padding: '8px 12px',
-            borderRadius: 8,
-            fontFamily: 'monospace',
-            fontSize: 12,
-            pointerEvents: 'none',
-            zIndex: 9999,
-          }}
-        >
-          <div>Gloop v0.1.0 - Phase 1</div>
-          <div>Click pet to toggle this panel</div>
-          <div>Species: {gloopConfig.name}</div>
-        </div>
-      )}
     </>
   );
 }

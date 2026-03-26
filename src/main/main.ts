@@ -1,6 +1,7 @@
 import { app, BrowserWindow, ipcMain, screen } from 'electron';
 import { join } from 'path';
 import { createTray } from './tray';
+import { registerSaveHandlers } from './save-manager';
 
 let overlayWindow: BrowserWindow | null = null;
 
@@ -64,6 +65,7 @@ ipcMain.handle('get-screen-size', () => {
 });
 
 app.whenReady().then(() => {
+  registerSaveHandlers();
   overlayWindow = createOverlayWindow();
   createTray(overlayWindow);
 

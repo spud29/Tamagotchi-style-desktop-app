@@ -1,4 +1,4 @@
-import { PetState, Direction, Position } from './types';
+import { PetState, Direction, Position, PetStats } from './types';
 
 /** Callback when the state machine transitions to a new state */
 export type StateChangeCallback = (newState: PetState, oldState: PetState) => void;
@@ -8,8 +8,7 @@ export type StateChangeCallback = (newState: PetState, oldState: PetState) => vo
  * Controls the pet's behavior by transitioning between states
  * based on timers, stat thresholds, and user interactions.
  *
- * Phase 1: Only implements IDLE and WALKING states.
- * Future phases add SLEEPING, EATING, SAD, SICK, ATTENTION, etc.
+ * Phase 2: Adds SLEEPING, SAD, SICK states driven by pet stats.
  */
 export class PetStateMachine {
   private state: PetState = 'IDLE';
@@ -26,6 +25,9 @@ export class PetStateMachine {
   private screenWidth = 1920;
   private screenHeight = 1080;
   private petSize = 64;
+
+  // Stats reference for stat-driven transitions
+  private stats: PetStats | null = null;
 
   constructor(screenWidth?: number, screenHeight?: number) {
     if (screenWidth) this.screenWidth = screenWidth;
@@ -47,6 +49,11 @@ export class PetStateMachine {
   /** Set the pet's rendered size for boundary calculations */
   setPetSize(size: number): void {
     this.petSize = size;
+  }
+
+  /** Update the stats snapshot for stat-driven transitions */
+  setStats(stats: PetStats): void {
+    this.stats = { ...stats };
   }
 
   /** Get current state */
@@ -84,6 +91,24 @@ export class PetStateMachine {
       case 'WALKING':
         return this.updateWalking(deltaTime, currentPos);
 
+      case 'SLEEPING':
+        return this.updateSleeping();
+
+      case 'SAD':
+        return this.updateSad();
+
+      case 'SICK':
+        return this.updateSick();
+
+      case 'HAPPY':
+        return this.updateHappy();
+
+      case 'EATING':
+        return this.updateEating();
+
+      case 'GHOST':
+        return this.updateGhost(deltaTime, currentPos);
+
       default:
         return null;
     }
@@ -97,6 +122,12 @@ export class PetStateMachine {
   // --- Private state handlers ---
 
   private updateIdle(): Position | null {
+    // Check stat-driven transitions before normal idle behavior
+    if (this.stats) {
+      const statTransition = this.checkStatTransitions();
+      if (statTransition) return null;
+    }
+
     if (this.stateTimer >= this.stateDuration) {
       this.transition('WALKING');
       this.pickRandomWalkTarget();
@@ -118,7 +149,7 @@ export class PetStateMachine {
     if (distance < 5) {
       this.walkTarget = null;
       this.transition('IDLE');
-      return this.walkTarget; // null, pet stays put
+      return null;
     }
 
     // Update direction based on movement
@@ -134,6 +165,101 @@ export class PetStateMachine {
     };
   }
 
+  private updateSleeping(): Position | null {
+    // Sleep for 15-30 seconds, then wake up
+    if (this.stateTimer >= this.stateDuration) {
+      this.transition('IDLE');
+    }
+    return null;
+  }
+
+  private updateSad(): Position | null {
+    // Stay sad for 5-10 seconds, then go back to idle
+    if (this.stateTimer >= this.stateDuration) {
+      this.transition('IDLE');
+    }
+    return null;
+  }
+
+  private updateSick(): Position | null {
+    // Stay sick until stats improve (checked on next idle transition)
+    // Auto-recover after 20 seconds if stats get better
+    if (this.stateTimer >= this.stateDuration) {
+      if (this.stats && this.stats.health > 20) {
+        this.transition('IDLE');
+      } else {
+        // Reset timer, stay sick
+        this.stateTimer = 0;
+      }
+    }
+    return null;
+  }
+
+  private updateHappy(): Position | null {
+    // Happy animation plays once (3 seconds), then back to idle
+    if (this.stateTimer >= this.stateDuration) {
+      this.transition('IDLE');
+    }
+    return null;
+  }
+
+  private updateEating(): Position | null {
+    // Eating animation lasts ~2 seconds, then happy, then idle
+    if (this.stateTimer >= this.stateDuration) {
+      this.transition('HAPPY');
+    }
+    return null;
+  }
+
+  private updateGhost(deltaTime: number, currentPos: Position): Position | null {
+    // Ghost floats slowly upward and drifts side to side
+    const floatSpeed = 15;
+    const driftAmplitude = 30;
+    const driftSpeed = 1.5;
+
+    const newY = currentPos.y - floatSpeed * deltaTime;
+    const newX = currentPos.x + Math.sin(this.stateTimer * driftSpeed) * driftAmplitude * deltaTime;
+
+    // Wrap around screen
+    const wrappedY = newY < -this.petSize ? this.screenHeight : newY;
+
+    return { x: newX, y: wrappedY };
+  }
+
+  /**
+   * Check stats and potentially trigger stat-driven transitions.
+   * Returns true if a transition occurred.
+   */
+  private checkStatTransitions(): boolean {
+    if (!this.stats) return false;
+
+    // Health at 0 = death
+    if (this.stats.health <= 0) {
+      this.transition('GHOST');
+      return true;
+    }
+
+    // Very low health = sick
+    if (this.stats.health <= 20 && this.state !== 'SICK') {
+      this.transition('SICK');
+      return true;
+    }
+
+    // Very low energy = sleep
+    if (this.stats.energy <= 15 && this.state !== 'SLEEPING') {
+      this.transition('SLEEPING');
+      return true;
+    }
+
+    // Low happiness = sad (with some randomness so it's not constant)
+    if (this.stats.happiness <= 25 && Math.random() < 0.02) {
+      this.transition('SAD');
+      return true;
+    }
+
+    return false;
+  }
+
   private transition(newState: PetState): void {
     const oldState = this.state;
     this.state = newState;
@@ -144,7 +270,25 @@ export class PetStateMachine {
         this.scheduleNextIdle();
         break;
       case 'WALKING':
-        this.stateDuration = Infinity; // Walking ends when we reach the target
+        this.stateDuration = Infinity;
+        break;
+      case 'SLEEPING':
+        this.stateDuration = 15 + Math.random() * 15; // 15-30 seconds
+        break;
+      case 'SAD':
+        this.stateDuration = 5 + Math.random() * 5; // 5-10 seconds
+        break;
+      case 'SICK':
+        this.stateDuration = 10; // Re-check every 10 seconds
+        break;
+      case 'HAPPY':
+        this.stateDuration = 3;
+        break;
+      case 'EATING':
+        this.stateDuration = 2;
+        break;
+      case 'GHOST':
+        this.stateDuration = Infinity; // Ghost state is permanent until reset
         break;
     }
 
@@ -167,7 +311,6 @@ export class PetStateMachine {
   }
 
   private calculateDirection(dx: number, dy: number): Direction {
-    // Determine primary movement direction
     if (Math.abs(dx) > Math.abs(dy)) {
       return dx > 0 ? 'right' : 'left';
     } else {

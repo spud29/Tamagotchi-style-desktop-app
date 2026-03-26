@@ -16,9 +16,7 @@ describe('PetStateMachine', () => {
     const sm = new PetStateMachine(800, 600);
     const pos = { x: 400, y: 300 };
 
-    // Advance time past the maximum idle duration (8 seconds)
     sm.update(9, pos);
-
     expect(sm.getState()).toBe('WALKING');
   });
 
@@ -26,14 +24,10 @@ describe('PetStateMachine', () => {
     const sm = new PetStateMachine(800, 600);
     const startPos = { x: 400, y: 300 };
 
-    // Force into walking state
     sm.update(9, startPos);
     expect(sm.getState()).toBe('WALKING');
 
-    // Update should return a new position
     const newPos = sm.update(0.016, startPos);
-    // newPos could be null if walk target happens to be very close
-    // but generally should be a position
     if (newPos) {
       expect(newPos.x).toBeTypeOf('number');
       expect(newPos.y).toBeTypeOf('number');
@@ -61,7 +55,6 @@ describe('PetStateMachine', () => {
     const sm = new PetStateMachine(800, 600);
     sm.setPetSize(64);
 
-    // Transition to walking many times and check targets are in bounds
     for (let i = 0; i < 20; i++) {
       sm.forceState('IDLE');
       sm.update(9, { x: 400, y: 300 });
@@ -79,16 +72,137 @@ describe('PetStateMachine', () => {
   it('transitions back to IDLE when reaching walk target', () => {
     const sm = new PetStateMachine(800, 600);
 
-    // Force walking
     sm.forceState('IDLE');
     sm.update(9, { x: 400, y: 300 });
     expect(sm.getState()).toBe('WALKING');
 
     const target = sm.getWalkTarget();
     if (target) {
-      // Place pet at the target - should transition back to IDLE
       sm.update(0.016, { x: target.x, y: target.y });
       expect(sm.getState()).toBe('IDLE');
     }
+  });
+
+  // --- Phase 2: Stat-driven state transitions ---
+
+  it('transitions to SLEEPING when energy is very low', () => {
+    const sm = new PetStateMachine(800, 600);
+    sm.setStats({
+      hunger: 50,
+      happiness: 50,
+      cleanliness: 50,
+      health: 50,
+      energy: 10, // Below 15 threshold
+    });
+
+    // Idle timer expires and stat check runs
+    sm.update(9, { x: 400, y: 300 });
+    // The state should now be SLEEPING since energy check runs before idle-to-walk
+    // Actually it transitions IDLE->check stats->SLEEPING
+    // The idle update checks stats first
+    expect(sm.getState()).toBe('SLEEPING');
+  });
+
+  it('transitions to SICK when health is very low', () => {
+    const sm = new PetStateMachine(800, 600);
+    sm.setStats({
+      hunger: 50,
+      happiness: 50,
+      cleanliness: 50,
+      health: 15, // At 20 threshold
+      energy: 50,
+    });
+
+    sm.update(9, { x: 400, y: 300 });
+    expect(sm.getState()).toBe('SICK');
+  });
+
+  it('transitions to GHOST when health reaches 0', () => {
+    const sm = new PetStateMachine(800, 600);
+    sm.setStats({
+      hunger: 0,
+      happiness: 0,
+      cleanliness: 0,
+      health: 0, // Dead
+      energy: 0,
+    });
+
+    sm.update(9, { x: 400, y: 300 });
+    expect(sm.getState()).toBe('GHOST');
+  });
+
+  it('SLEEPING state returns to IDLE after duration', () => {
+    const sm = new PetStateMachine(800, 600);
+    sm.forceState('SLEEPING');
+    expect(sm.getState()).toBe('SLEEPING');
+
+    // Sleep lasts 15-30 seconds
+    sm.update(31, { x: 400, y: 300 });
+    expect(sm.getState()).toBe('IDLE');
+  });
+
+  it('EATING state transitions to HAPPY', () => {
+    const sm = new PetStateMachine(800, 600);
+    sm.forceState('EATING');
+    expect(sm.getState()).toBe('EATING');
+
+    // Eating lasts 2 seconds
+    sm.update(2.1, { x: 400, y: 300 });
+    expect(sm.getState()).toBe('HAPPY');
+  });
+
+  it('HAPPY state transitions back to IDLE', () => {
+    const sm = new PetStateMachine(800, 600);
+    sm.forceState('HAPPY');
+    expect(sm.getState()).toBe('HAPPY');
+
+    sm.update(3.1, { x: 400, y: 300 });
+    expect(sm.getState()).toBe('IDLE');
+  });
+
+  it('GHOST state moves the pet (floating)', () => {
+    const sm = new PetStateMachine(800, 600);
+    sm.forceState('GHOST');
+
+    const pos = { x: 400, y: 300 };
+    const newPos = sm.update(1, pos);
+
+    expect(newPos).not.toBeNull();
+    if (newPos) {
+      expect(newPos.y).toBeLessThan(pos.y); // Ghost floats up
+    }
+  });
+
+  it('SICK state stays sick when health is still low', () => {
+    const sm = new PetStateMachine(800, 600);
+    sm.setStats({
+      hunger: 50,
+      happiness: 50,
+      cleanliness: 50,
+      health: 10, // Still low
+      energy: 50,
+    });
+
+    sm.forceState('SICK');
+
+    // After 10 seconds (sick duration), health still low → stays sick
+    sm.update(11, { x: 400, y: 300 });
+    expect(sm.getState()).toBe('SICK');
+  });
+
+  it('SICK state recovers to IDLE when health improves', () => {
+    const sm = new PetStateMachine(800, 600);
+    sm.forceState('SICK');
+
+    sm.setStats({
+      hunger: 50,
+      happiness: 50,
+      cleanliness: 50,
+      health: 50, // Recovered
+      energy: 50,
+    });
+
+    sm.update(11, { x: 400, y: 300 });
+    expect(sm.getState()).toBe('IDLE');
   });
 });
