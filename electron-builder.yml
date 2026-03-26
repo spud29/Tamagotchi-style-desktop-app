@@ -1,0 +1,25 @@
+appId: com.gloop.desktop-pet
+productName: Gloop
+directories:
+  output: release
+  buildResources: assets
+files:
+  - dist/**/*
+  - assets/**/*
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+  icon: assets/icons/app-icon.png
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+mac:
+  target:
+    - target: dmg
+      arch:
+        - x64
+        - arm64
+  icon: assets/icons/app-icon.png
+  category: public.app-category.entertainment
