@@ -6,6 +6,8 @@ import { FeedingUI } from './FeedingUI';
 import { PoopManager } from './PoopManager';
 import { SpeechBubble } from './SpeechBubble';
 import { AttentionOverlay } from './AttentionOverlay';
+import { TugOfWarUI } from './TugOfWarUI';
+import { HideSeekUI } from './HideSeekUI';
 import { useCursorTracking } from '../hooks/useCursorTracking';
 import { SpriteSheetConfig, AnimationDef, LifeStage, LifeStageConfig } from '../../engine/types';
 
@@ -61,6 +63,13 @@ export function PetCanvas({
     y: 0,
   });
   const [feedingMode, setFeedingMode] = useState(false);
+  const [tugOfWarMode, setTugOfWarMode] = useState(false);
+  const [hideSeekMode, setHideSeekMode] = useState(false);
+  const [playMenu, setPlayMenu] = useState<{ visible: boolean; x: number; y: number }>({
+    visible: false,
+    x: 0,
+    y: 0,
+  });
   const [speechMessage, setSpeechMessage] = useState<string | null>(null);
 
   const showBubble = useCallback((msg: string) => {
@@ -187,8 +196,12 @@ export function PetCanvas({
           setFeedingMode(true);
           break;
         case 'play':
-          play();
-          showBubble('🎮 Yay, playtime!');
+          // Show play menu with game choices
+          setPlayMenu({
+            visible: true,
+            x: window.innerWidth / 2,
+            y: window.innerHeight / 2,
+          });
           break;
         case 'clean':
           clean();
@@ -206,7 +219,55 @@ export function PetCanvas({
           break;
       }
     },
-    [play, clean, medicine, sleep, onClick, showBubble]
+    [clean, medicine, sleep, onClick, showBubble]
+  );
+
+  const handlePlayChoice = useCallback(
+    (game: string) => {
+      setPlayMenu((prev) => ({ ...prev, visible: false }));
+      switch (game) {
+        case 'quick':
+          play();
+          showBubble('🎮 Yay, playtime!');
+          break;
+        case 'tug':
+          setTugOfWarMode(true);
+          showBubble('💪 Let\'s tug!');
+          break;
+        case 'hide':
+          setHideSeekMode(true);
+          showBubble('👀 Find me!');
+          break;
+      }
+    },
+    [play, showBubble]
+  );
+
+  const handleTugComplete = useCallback(
+    (result: { won: boolean; happinessBonus: number; energyCost: number }) => {
+      setTugOfWarMode(false);
+      const stats = result;
+      play(); // records care
+      if (stats.won) {
+        showBubble('🎉 Great game! You win!');
+      } else {
+        showBubble('💪 Gloop is strong!');
+      }
+    },
+    [play, showBubble]
+  );
+
+  const handleHideComplete = useCallback(
+    (result: { won: boolean; happinessBonus: number; energyCost: number }) => {
+      setHideSeekMode(false);
+      play(); // records care
+      if (result.won) {
+        showBubble('🎉 You found me!');
+      } else {
+        showBubble('😏 Better luck next time!');
+      }
+    },
+    [play, showBubble]
   );
 
   const handleFeed = useCallback(() => {
@@ -382,6 +443,97 @@ export function PetCanvas({
         petSize={currentPetSize}
         onFeed={handleFeed}
         onClose={() => setFeedingMode(false)}
+      />
+
+      {/* Play menu (game selection) */}
+      {playMenu.visible && (
+        <div
+          style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            width: '100vw',
+            height: '100vh',
+            pointerEvents: 'auto',
+            zIndex: 9998,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            background: 'rgba(0, 0, 0, 0.2)',
+          }}
+          onClick={() => setPlayMenu((prev) => ({ ...prev, visible: false }))}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              background: 'rgba(20, 20, 35, 0.96)',
+              borderRadius: 16,
+              padding: '16px 20px',
+              border: '1px solid rgba(79, 195, 247, 0.3)',
+              boxShadow: '0 8px 32px rgba(0,0,0,0.5)',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 8,
+              minWidth: 200,
+            }}
+          >
+            <div
+              style={{
+                color: '#4FC3F7',
+                fontFamily: '"Segoe UI", system-ui, sans-serif',
+                fontSize: 14,
+                fontWeight: 700,
+                textAlign: 'center',
+                marginBottom: 4,
+              }}
+            >
+              Choose a Game!
+            </div>
+            {[
+              { id: 'quick', label: '🎮 Quick Play', desc: 'Instant happiness boost' },
+              { id: 'tug', label: '💪 Tug of War', desc: 'Mash to pull the rope!' },
+              { id: 'hide', label: '👀 Hide & Seek', desc: 'Find Gloop on screen!' },
+            ].map((game) => (
+              <div
+                key={game.id}
+                onClick={() => handlePlayChoice(game.id)}
+                style={{
+                  padding: '10px 14px',
+                  borderRadius: 10,
+                  background: 'rgba(79, 195, 247, 0.1)',
+                  cursor: 'pointer',
+                  fontFamily: '"Segoe UI", system-ui, sans-serif',
+                  transition: 'background 0.15s',
+                }}
+                onMouseEnter={(e) => {
+                  (e.currentTarget as HTMLDivElement).style.background = 'rgba(79, 195, 247, 0.25)';
+                }}
+                onMouseLeave={(e) => {
+                  (e.currentTarget as HTMLDivElement).style.background = 'rgba(79, 195, 247, 0.1)';
+                }}
+              >
+                <div style={{ color: '#FFF', fontSize: 14, fontWeight: 600 }}>{game.label}</div>
+                <div style={{ color: 'rgba(255,255,255,0.5)', fontSize: 11 }}>{game.desc}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Tug of War minigame */}
+      <TugOfWarUI
+        visible={tugOfWarMode}
+        petEnergy={petState.stats.energy}
+        onComplete={handleTugComplete}
+        onClose={() => setTugOfWarMode(false)}
+      />
+
+      {/* Hide & Seek minigame */}
+      <HideSeekUI
+        visible={hideSeekMode}
+        petSize={currentPetSize}
+        onComplete={handleHideComplete}
+        onClose={() => setHideSeekMode(false)}
       />
     </>
   );
