@@ -8,6 +8,7 @@ import { SpeechBubble } from './SpeechBubble';
 import { AttentionOverlay } from './AttentionOverlay';
 import { TugOfWarUI } from './TugOfWarUI';
 import { HideSeekUI } from './HideSeekUI';
+import { DeathRebirthUI } from './DeathRebirthUI';
 import { useCursorTracking } from '../hooks/useCursorTracking';
 import { SpriteSheetConfig, AnimationDef, LifeStage, LifeStageConfig } from '../../engine/types';
 
@@ -46,6 +47,7 @@ export function PetCanvas({
     getSaveData,
     loadSaveData,
     setCursorPosition,
+    rebirth,
   } = usePetEngine(spriteSheetConfig, animations, getAnimationName, petSize, lifeStageConfigs);
 
   // Track cursor position for attention behaviors
@@ -534,6 +536,15 @@ export function PetCanvas({
         petSize={currentPetSize}
         onComplete={handleHideComplete}
         onClose={() => setHideSeekMode(false)}
+      />
+
+      {/* Death/Rebirth overlay */}
+      <DeathRebirthUI
+        isGhost={petState.deathRebirth.isGhost}
+        mourningTimeRemaining={petState.deathRebirth.mourningTimeRemaining}
+        rebirthReady={petState.deathRebirth.rebirthReady}
+        memorial={petState.deathRebirth.memorial}
+        onRebirth={rebirth}
       />
     </>
   );

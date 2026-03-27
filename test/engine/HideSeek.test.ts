@@ -40,13 +40,19 @@ describe('HideSeekGame', () => {
   });
 
   it('click count increments', () => {
-    game.update(3.1);
+    // Use fixed random to place pet at known position (400, 300)
+    vi.spyOn(Math, 'random').mockReturnValue(0.5);
+    const g = new HideSeekGame(800, 600, 48);
+    g.start();
+    g.update(3.1);
 
-    game.click(100, 100);
-    game.click(200, 200);
-    game.click(300, 300);
+    // Click far away from (400, 300) to avoid finding pet
+    g.click(50, 50);
+    g.click(50, 100);
+    g.click(50, 150);
 
-    expect(game.getState().clickCount).toBe(3);
+    expect(g.getState().clickCount).toBe(3);
+    vi.restoreAllMocks();
   });
 
   it('clicking directly on hidden position finds the pet', () => {

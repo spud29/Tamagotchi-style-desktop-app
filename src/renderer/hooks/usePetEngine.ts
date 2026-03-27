@@ -5,6 +5,7 @@ import { GameClock } from '../../engine/GameClock';
 import { EvolutionManager } from '../../engine/EvolutionManager';
 import { CareTracker } from '../../engine/CareTracker';
 import { AttentionSeeker, AttentionBehavior } from '../../engine/AttentionSeeker';
+import { DeathRebirthManager, DeathRebirthState } from '../../engine/DeathRebirth';
 import { AnimationPlayer } from '../../sprites/AnimationPlayer';
 import { SpriteSheet } from '../../sprites/SpriteSheet';
 import {
@@ -29,6 +30,7 @@ export interface PetEngineState {
   petSize: number;
   evolutionProgress: number;
   attentionBehavior: AttentionBehavior | null;
+  deathRebirth: DeathRebirthState;
 }
 
 interface UsePetEngineReturn {
@@ -44,6 +46,8 @@ interface UsePetEngineReturn {
   loadSaveData: (data: PetSaveData) => void;
   /** Set cursor position for attention behaviors */
   setCursorPosition: (pos: Position) => void;
+  /** Start a new egg after death */
+  rebirth: () => void;
 }
 
 const DEFAULT_STATS: PetStats = {
@@ -74,6 +78,7 @@ export function usePetEngine(
   const evolutionRef = useRef<EvolutionManager | null>(null);
   const careTrackerRef = useRef<CareTracker | null>(null);
   const attentionRef = useRef<AttentionSeeker | null>(null);
+  const deathRebirthRef = useRef<DeathRebirthManager | null>(null);
   const cursorPosRef = useRef<Position>({ x: 0, y: 0 });
   const animFrameRef = useRef<number>(0);
   const lastTimeRef = useRef<number>(0);
@@ -92,6 +97,13 @@ export function usePetEngine(
     petSize: lifeStageConfigs.egg.size.width,
     evolutionProgress: 0,
     attentionBehavior: null,
+    deathRebirth: {
+      isDead: false,
+      isGhost: false,
+      mourningTimeRemaining: 0,
+      rebirthReady: false,
+      memorial: null,
+    },
   });
 
   const petStateRef = useRef(petState);
@@ -115,6 +127,7 @@ export function usePetEngine(
       ['wave', 'ride_cursor', 'knock', 'mess_icons', 'yeet_icons'],
       []
     );
+    const deathRebirth = new DeathRebirthManager();
 
     spriteSheetRef.current = sheet;
     animPlayerRef.current = player;
@@ -123,6 +136,7 @@ export function usePetEngine(
     evolutionRef.current = evolution;
     careTrackerRef.current = careTracker;
     attentionRef.current = attention;
+    deathRebirthRef.current = deathRebirth;
 
     // When evolution occurs, update decay rates for new stage
     evolution.setOnEvolve((newStage) => {
@@ -230,6 +244,25 @@ export function usePetEngine(
 
         // Feed stats to state machine
         sm.setStats(statsManager.getStats());
+
+        // Detect death: health at 0 triggers ghost/death sequence
+        const deathMgr = deathRebirthRef.current;
+        if (deathMgr && statsManager.isDead() && !deathMgr.getState().isDead) {
+          deathMgr.triggerDeath(
+            petNameRef.current,
+            'gloop',
+            evolution.getStage(),
+            gameClock.getAgeMinutes()
+          );
+          sm.forceState('GHOST');
+          evolution.setStage('ghost');
+        }
+      }
+
+      // Update death/rebirth timer
+      const deathMgr = deathRebirthRef.current;
+      if (deathMgr) {
+        deathMgr.update(deltaTime);
       }
 
       // Check evolution every 5 seconds
@@ -315,6 +348,14 @@ export function usePetEngine(
       );
 
       // Update React state
+      const drState = deathRebirthRef.current?.getState() ?? {
+        isDead: false,
+        isGhost: false,
+        mourningTimeRemaining: 0,
+        rebirthReady: false,
+        memorial: null,
+      };
+
       setPetState({
         position: finalPos,
         state: newState,
@@ -326,6 +367,7 @@ export function usePetEngine(
         petSize: currentPetSize,
         evolutionProgress: evoProgress,
         attentionBehavior: activeBehavior,
+        deathRebirth: drState,
       });
 
       // Render
@@ -509,6 +551,69 @@ export function usePetEngine(
     cursorPosRef.current = pos;
   }, []);
 
+  const rebirth = useCallback(() => {
+    const dr = deathRebirthRef.current;
+    const stats = statsManagerRef.current;
+    const clock = gameClockRef.current;
+    const sm = stateMachineRef.current;
+    const evolution = evolutionRef.current;
+    const care = careTrackerRef.current;
+    if (!dr || !stats || !clock || !sm || !evolution || !care) return;
+
+    // Confirm rebirth in the death manager
+    dr.confirmRebirth();
+
+    // Reset all systems for a new pet
+    petIdRef.current = crypto.randomUUID();
+    petNameRef.current = 'Gloop';
+    createdAtRef.current = new Date().toISOString();
+
+    // Reset stats to defaults
+    stats.setAllStats({ ...DEFAULT_STATS });
+    stats.resume();
+
+    // Reset clock
+    clock.setAgeMinutes(0);
+    clock.markSaved();
+
+    // Reset evolution to egg
+    const eggConfig = lifeStageConfigs.egg;
+    evolution.setStage('egg');
+    stats.setDecayRates(eggConfig.statDecayRates);
+    sm.setPetSize(eggConfig.size.width);
+
+    // Reset care tracker
+    care.loadHistory({
+      totalFeedings: 0,
+      totalPlaySessions: 0,
+      totalCleanings: 0,
+      neglectEvents: 0,
+      averageCareScore: 50,
+    });
+
+    // Center the new egg on screen
+    sm.forceState('EGG');
+    const centerX = (window.innerWidth || 800) / 2 - eggConfig.size.width / 2;
+    const centerY = (window.innerHeight || 600) / 2 - eggConfig.size.width / 2;
+
+    setPetState((prev) => ({
+      ...prev,
+      position: { x: centerX, y: centerY },
+      state: 'EGG',
+      stats: { ...DEFAULT_STATS },
+      ageMinutes: 0,
+      isAlive: true,
+      lifeStage: 'egg',
+      petSize: eggConfig.size.width,
+      evolutionProgress: 0,
+      attentionBehavior: null,
+      deathRebirth: dr.getState(),
+    }));
+
+    // Auto-save the new egg
+    autoSave();
+  }, [lifeStageConfigs, autoSave]);
+
   return {
     petState,
     canvasRef,
@@ -521,6 +626,7 @@ export function usePetEngine(
     getSaveData,
     loadSaveData,
     setCursorPosition,
+    rebirth,
   };
 }
 
