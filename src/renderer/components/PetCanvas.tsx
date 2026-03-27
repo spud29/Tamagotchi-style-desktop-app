@@ -10,6 +10,7 @@ import { TugOfWarUI } from './TugOfWarUI';
 import { HideSeekUI } from './HideSeekUI';
 import { DeathRebirthUI } from './DeathRebirthUI';
 import { useCursorTracking } from '../hooks/useCursorTracking';
+import { sfx } from '../audio/SFXManager';
 import { SpriteSheetConfig, AnimationDef, LifeStage, LifeStageConfig } from '../../engine/types';
 
 interface PetCanvasProps {
@@ -128,15 +129,18 @@ export function PetCanvas({
   useEffect(() => {
     switch (petState.state) {
       case 'SAD':
+        sfx.play('sad');
         showBubble('😢 I\'m sad...');
         break;
       case 'SICK':
+        sfx.play('sick');
         showBubble('🤒 I don\'t feel good...');
         break;
       case 'SLEEPING':
         showBubble('💤 Zzz...');
         break;
       case 'GHOST':
+        sfx.play('death');
         showBubble('👻 ...');
         break;
     }
@@ -175,10 +179,13 @@ export function PetCanvas({
       prevStageRef.current = petState.lifeStage;
 
       if (prev === 'egg' && petState.lifeStage === 'baby') {
+        sfx.play('hatch');
         showBubble('🥚 I hatched!');
       } else if (petState.lifeStage === 'teen') {
+        sfx.play('evolve');
         showBubble('🎉 I\'m a teenager now!');
       } else if (petState.lifeStage === 'adult') {
+        sfx.play('evolve');
         showBubble('🎉 I\'m all grown up!');
       }
     }
@@ -207,14 +214,17 @@ export function PetCanvas({
           break;
         case 'clean':
           clean();
+          sfx.play('clean');
           showBubble('✨ So fresh!');
           break;
         case 'medicine':
           medicine();
+          sfx.play('medicine');
           showBubble('💊 Feeling better!');
           break;
         case 'sleep':
           sleep();
+          sfx.play('sleep');
           break;
         case 'stats':
           onClick?.();
@@ -230,6 +240,7 @@ export function PetCanvas({
       switch (game) {
         case 'quick':
           play();
+          sfx.play('play');
           showBubble('🎮 Yay, playtime!');
           break;
         case 'tug':
@@ -250,6 +261,7 @@ export function PetCanvas({
       setTugOfWarMode(false);
       const stats = result;
       play(); // records care
+      sfx.play(stats.won ? 'tug_win' : 'happy');
       if (stats.won) {
         showBubble('🎉 Great game! You win!');
       } else {
@@ -263,6 +275,7 @@ export function PetCanvas({
     (result: { won: boolean; happinessBonus: number; energyCost: number }) => {
       setHideSeekMode(false);
       play(); // records care
+      sfx.play(result.won ? 'hide_found' : 'happy');
       if (result.won) {
         showBubble('🎉 You found me!');
       } else {
@@ -274,11 +287,13 @@ export function PetCanvas({
 
   const handleFeed = useCallback(() => {
     feed();
+    sfx.play('feed');
     showBubble('😋 Yummy!');
   }, [feed, showBubble]);
 
   const handleCleanPoop = useCallback(() => {
     clean();
+    sfx.play('poop_clean');
     showBubble('✨ Clean!');
   }, [clean, showBubble]);
 

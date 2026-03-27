@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <!-- Background circle -->
+  <circle cx="128" cy="128" r="120" fill="#1A1A2E"/>
+  <circle cx="128" cy="128" r="110" fill="#16213E"/>
+
+  <!-- Gloop body -->
+  <circle cx="128" cy="140" r="60" fill="#4FC3F7"/>
+
+  <!-- Eyes -->
+  <circle cx="110" cy="130" r="8" fill="#1A237E"/>
+  <circle cx="146" cy="130" r="8" fill="#1A237E"/>
+  <circle cx="112" cy="128" r="3" fill="#FFF"/>
+  <circle cx="148" cy="128" r="3" fill="#FFF"/>
+
+  <!-- Smile -->
+  <path d="M 108 150 Q 128 170 148 150" stroke="#1A237E" stroke-width="3" fill="none" stroke-linecap="round"/>
+
+  <!-- Antennae -->
+  <line x1="108" y1="85" x2="95" y2="55" stroke="#4FC3F7" stroke-width="3" stroke-linecap="round"/>
+  <line x1="148" y1="85" x2="161" y2="55" stroke="#4FC3F7" stroke-width="3" stroke-linecap="round"/>
+  <circle cx="95" cy="55" r="5" fill="#FDD835"/>
+  <circle cx="161" cy="55" r="5" fill="#FDD835"/>
+
+  <!-- Name text -->
+  <text x="128" y="230" text-anchor="middle" font-family="sans-serif" font-size="24" font-weight="bold" fill="#4FC3F7">GLOOP</text>
+</svg>

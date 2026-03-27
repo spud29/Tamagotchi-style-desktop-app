@@ -1,7 +1,7 @@
 {
   "name": "gloop-desktop-pet",
-  "version": "0.1.0",
-  "description": "A Tamagotchi-style virtual desktop pet that lives on your desktop as a transparent overlay",
+  "version": "1.0.0",
+  "description": "Gloop - A Tamagotchi-style virtual desktop pet that lives on your desktop as a transparent overlay",
   "main": "dist/main/main.js",
   "scripts": {
     "dev": "electron-vite dev",
@@ -9,8 +9,60 @@
     "preview": "electron-vite preview",
     "build:win": "electron-vite build && electron-builder --win",
     "build:mac": "electron-vite build && electron-builder --mac",
+    "build:all": "electron-vite build && electron-builder --win --mac",
     "test": "vitest run",
     "test:watch": "vitest"
+  },
+  "build": {
+    "appId": "com.gloop.desktoppet",
+    "productName": "Gloop",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "assets/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "assets",
+        "to": "assets",
+        "filter": ["**/*"]
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        }
+      ],
+      "icon": "assets/icons/icon.ico"
+    },
+    "nsis": {
+      "oneClick": true,
+      "allowToChangeInstallationDirectory": false,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Gloop"
+    },
+    "mac": {
+      "target": [
+        {
+          "target": "dmg",
+          "arch": ["x64", "arm64"]
+        }
+      ],
+      "icon": "assets/icons/icon.icns",
+      "category": "public.app-category.entertainment"
+    },
+    "dmg": {
+      "title": "Gloop",
+      "contents": [
+        { "x": 130, "y": 220 },
+        { "x": 410, "y": 220, "type": "link", "path": "/Applications" }
+      ]
+    }
   },
   "dependencies": {
     "react": "^18.3.1",
