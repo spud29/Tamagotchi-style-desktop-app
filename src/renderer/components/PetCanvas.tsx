@@ -5,6 +5,8 @@ import { ContextMenu, getDefaultMenuActions } from './ContextMenu';
 import { FeedingUI } from './FeedingUI';
 import { PoopManager } from './PoopManager';
 import { SpeechBubble } from './SpeechBubble';
+import { AttentionOverlay } from './AttentionOverlay';
+import { useCursorTracking } from '../hooks/useCursorTracking';
 import { SpriteSheetConfig, AnimationDef, LifeStage, LifeStageConfig } from '../../engine/types';
 
 interface PetCanvasProps {
@@ -41,7 +43,16 @@ export function PetCanvas({
     medicine,
     getSaveData,
     loadSaveData,
+    setCursorPosition,
   } = usePetEngine(spriteSheetConfig, animations, getAnimationName, petSize, lifeStageConfigs);
+
+  // Track cursor position for attention behaviors
+  const cursorPos = useCursorTracking();
+
+  // Feed cursor position to engine
+  useEffect(() => {
+    setCursorPosition(cursorPos);
+  }, [cursorPos, setCursorPosition]);
 
   // UI state
   const [contextMenu, setContextMenu] = useState<{ visible: boolean; x: number; y: number }>({
@@ -119,6 +130,31 @@ export function PetCanvas({
         break;
     }
   }, [petState.state, showBubble]);
+
+  // Attention behavior speech bubbles
+  const prevBehaviorRef = React.useRef(petState.attentionBehavior);
+  useEffect(() => {
+    if (petState.attentionBehavior && petState.attentionBehavior !== prevBehaviorRef.current) {
+      switch (petState.attentionBehavior) {
+        case 'wave':
+          showBubble('👋 Hey! Look at me!');
+          break;
+        case 'ride_cursor':
+          showBubble('🎢 Wheee!');
+          break;
+        case 'knock':
+          showBubble('🪟 *knock knock*');
+          break;
+        case 'mess_icons':
+          showBubble('📂 Reorganizing...');
+          break;
+        case 'yeet_icons':
+          showBubble('💨 Yeet!');
+          break;
+      }
+    }
+    prevBehaviorRef.current = petState.attentionBehavior;
+  }, [petState.attentionBehavior, showBubble]);
 
   // Evolution celebration
   const prevStageRef = React.useRef(petState.lifeStage);
@@ -291,6 +327,14 @@ export function PetCanvas({
           pointerEvents: 'auto',
           cursor: 'default',
         }}
+      />
+
+      {/* Attention-seeking visual effects */}
+      <AttentionOverlay
+        behavior={petState.attentionBehavior}
+        petPosition={petState.position}
+        petSize={currentPetSize}
+        cursorPosition={cursorPos}
       />
 
       {/* Poop spawning (not during egg stage) */}

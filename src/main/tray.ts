@@ -1,5 +1,6 @@
 import { Tray, Menu, app, BrowserWindow, nativeImage } from 'electron';
 import { join } from 'path';
+import { restoreIcons } from './desktop-icons';
 
 let tray: Tray | null = null;
 
@@ -48,6 +49,10 @@ export function createTray(mainWindow: BrowserWindow): void {
     {
       label: 'Stats',
       click: () => mainWindow.webContents.send('tray-action', 'stats'),
+    },
+    {
+      label: 'Restore Desktop Icons',
+      click: () => restoreIcons(),
     },
     { type: 'separator' },
     {

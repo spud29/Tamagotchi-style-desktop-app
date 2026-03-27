@@ -4,6 +4,7 @@ import { StatsManager } from '../../engine/StatsManager';
 import { GameClock } from '../../engine/GameClock';
 import { EvolutionManager } from '../../engine/EvolutionManager';
 import { CareTracker } from '../../engine/CareTracker';
+import { AttentionSeeker, AttentionBehavior } from '../../engine/AttentionSeeker';
 import { AnimationPlayer } from '../../sprites/AnimationPlayer';
 import { SpriteSheet } from '../../sprites/SpriteSheet';
 import {
@@ -27,6 +28,7 @@ export interface PetEngineState {
   lifeStage: LifeStage;
   petSize: number;
   evolutionProgress: number;
+  attentionBehavior: AttentionBehavior | null;
 }
 
 interface UsePetEngineReturn {
@@ -40,6 +42,8 @@ interface UsePetEngineReturn {
   medicine: () => void;
   getSaveData: () => PetSaveData | null;
   loadSaveData: (data: PetSaveData) => void;
+  /** Set cursor position for attention behaviors */
+  setCursorPosition: (pos: Position) => void;
 }
 
 const DEFAULT_STATS: PetStats = {
@@ -69,6 +73,8 @@ export function usePetEngine(
   const gameClockRef = useRef<GameClock | null>(null);
   const evolutionRef = useRef<EvolutionManager | null>(null);
   const careTrackerRef = useRef<CareTracker | null>(null);
+  const attentionRef = useRef<AttentionSeeker | null>(null);
+  const cursorPosRef = useRef<Position>({ x: 0, y: 0 });
   const animFrameRef = useRef<number>(0);
   const lastTimeRef = useRef<number>(0);
   const saveTimerRef = useRef<number>(0);
@@ -85,6 +91,7 @@ export function usePetEngine(
     lifeStage: 'egg',
     petSize: lifeStageConfigs.egg.size.width,
     evolutionProgress: 0,
+    attentionBehavior: null,
   });
 
   const petStateRef = useRef(petState);
@@ -104,12 +111,18 @@ export function usePetEngine(
     const evolution = new EvolutionManager(lifeStageConfigs, 'egg');
     const careTracker = new CareTracker();
 
+    const attention = new AttentionSeeker(
+      ['wave', 'ride_cursor', 'knock', 'mess_icons', 'yeet_icons'],
+      []
+    );
+
     spriteSheetRef.current = sheet;
     animPlayerRef.current = player;
     statsManagerRef.current = statsManager;
     gameClockRef.current = gameClock;
     evolutionRef.current = evolution;
     careTrackerRef.current = careTracker;
+    attentionRef.current = attention;
 
     // When evolution occurs, update decay rates for new stage
     evolution.setOnEvolve((newStage) => {
@@ -242,16 +255,51 @@ export function usePetEngine(
         }
       }
 
+      // Update attention seeker
+      const attention = attentionRef.current;
+      let activeBehavior: AttentionBehavior | null = null;
+      if (attention && currentStage !== 'egg' && currentStage !== 'ghost') {
+        attention.setUnlockedAbilities(evolution.getUnlockedAbilities());
+        activeBehavior = attention.update(deltaTime, statsManager.getStats(), sm.getState());
+
+        // If attention triggered and pet was IDLE, force ATTENTION state
+        if (activeBehavior && sm.getState() === 'IDLE') {
+          sm.forceState('ATTENTION');
+        }
+        // If attention ended but state machine still in ATTENTION, go back to IDLE
+        if (!activeBehavior && sm.getState() === 'ATTENTION') {
+          sm.forceState('IDLE');
+        }
+
+        // Handle icon mischief via IPC
+        if (activeBehavior === 'mess_icons' || activeBehavior === 'yeet_icons') {
+          handleIconMischief(activeBehavior);
+        }
+      }
+
       // Update state machine
       const currentPos = petStateRef.current.position;
       const newPos = sm.update(deltaTime, currentPos);
       const newState = sm.getState();
       const currentDir = sm.getDirection();
 
+      // Override position for ride_cursor behavior
+      let finalPos = newPos ?? currentPos;
+      if (activeBehavior === 'ride_cursor') {
+        const cursorPos = cursorPosRef.current;
+        const petSz = evolution.getPetSize().width;
+        finalPos = {
+          x: cursorPos.x - petSz / 2,
+          y: cursorPos.y - petSz - 5,
+        };
+      }
+
       // Map state to animation
       const animState = currentStage === 'egg'
         ? 'egg_idle'
-        : mapStateToAnimation(newState);
+        : activeBehavior
+          ? mapAttentionToAnimation(activeBehavior)
+          : mapStateToAnimation(newState);
       const animName = getAnimationName(animState, currentDir);
       player.play(animName);
       player.update(deltaTime);
@@ -267,9 +315,8 @@ export function usePetEngine(
       );
 
       // Update React state
-      const pos = newPos ?? currentPos;
       setPetState({
-        position: pos,
+        position: finalPos,
         state: newState,
         direction: currentDir,
         stats: updatedStats,
@@ -278,15 +325,16 @@ export function usePetEngine(
         lifeStage: currentStage,
         petSize: currentPetSize,
         evolutionProgress: evoProgress,
+        attentionBehavior: activeBehavior,
       });
 
       // Render
       ctx.clearRect(0, 0, canvas.width, canvas.height);
 
       if (sheet?.isLoaded()) {
-        player.draw(ctx, pos.x, pos.y, currentPetSize, currentPetSize);
+        player.draw(ctx, finalPos.x, finalPos.y, currentPetSize, currentPetSize);
       } else {
-        drawPlaceholderPet(ctx, pos.x, pos.y, currentPetSize, newState, currentStage);
+        drawPlaceholderPet(ctx, finalPos.x, finalPos.y, currentPetSize, newState, currentStage);
       }
 
       // Auto-save every 30 seconds
@@ -457,6 +505,10 @@ export function usePetEngine(
     return buildSaveData();
   }, [buildSaveData]);
 
+  const setCursorPosition = useCallback((pos: Position) => {
+    cursorPosRef.current = pos;
+  }, []);
+
   return {
     petState,
     canvasRef,
@@ -468,7 +520,33 @@ export function usePetEngine(
     medicine,
     getSaveData,
     loadSaveData,
+    setCursorPosition,
   };
+}
+
+/** Trigger desktop icon mischief via IPC */
+let iconMischiefCooldown = 0;
+function handleIconMischief(behavior: AttentionBehavior): void {
+  if (!window.electronAPI) return;
+
+  // Only trigger actual icon moves occasionally (not every frame)
+  const now = Date.now();
+  if (now - iconMischiefCooldown < 2000) return;
+  iconMischiefCooldown = now;
+
+  window.electronAPI.getDesktopIcons().then((icons) => {
+    if (icons.length === 0) return;
+
+    // Pick a random icon to mess with
+    const target = icons[Math.floor(Math.random() * icons.length)];
+    const offsetX = (Math.random() - 0.5) * 200;
+    const offsetY = (Math.random() - 0.5) * 200;
+
+    const newX = Math.max(0, target.x + offsetX);
+    const newY = Math.max(0, target.y + offsetY);
+
+    window.electronAPI.moveDesktopIcon(target.name, newX, newY);
+  });
 }
 
 function mapStateToAnimation(state: PetState): string {
@@ -482,6 +560,18 @@ function mapStateToAnimation(state: PetState): string {
     case 'SAD': return 'sad';
     case 'SICK': return 'sick';
     case 'GHOST': return 'ghost';
+    default: return 'idle';
+  }
+}
+
+/** Map attention behavior to animation name */
+function mapAttentionToAnimation(behavior: AttentionBehavior): string {
+  switch (behavior) {
+    case 'wave': return 'wave';
+    case 'ride_cursor': return 'ride_cursor';
+    case 'knock': return 'knock';
+    case 'mess_icons': return 'carry_left';
+    case 'yeet_icons': return 'reach';
     default: return 'idle';
   }
 }

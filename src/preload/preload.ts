@@ -11,6 +11,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   saveGame: (data: unknown) => ipcRenderer.invoke('save-game', data),
   loadGame: () => ipcRenderer.invoke('load-game'),
 
+  // Desktop icon manipulation
+  getDesktopIcons: () => ipcRenderer.invoke('get-desktop-icons'),
+  moveDesktopIcon: (name: string, x: number, y: number) => ipcRenderer.invoke('move-desktop-icon', name, x, y),
+  restoreIcons: () => ipcRenderer.invoke('restore-icons'),
+
   // Listen for tray actions
   onTrayAction: (callback: (action: string) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, action: string) => callback(action);

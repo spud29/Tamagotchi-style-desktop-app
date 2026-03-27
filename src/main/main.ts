@@ -2,6 +2,7 @@ import { app, BrowserWindow, ipcMain, screen } from 'electron';
 import { join } from 'path';
 import { createTray } from './tray';
 import { registerSaveHandlers } from './save-manager';
+import { registerDesktopIconHandlers, restoreIconsOnExit } from './desktop-icons';
 
 let overlayWindow: BrowserWindow | null = null;
 
@@ -66,6 +67,7 @@ ipcMain.handle('get-screen-size', () => {
 
 app.whenReady().then(() => {
   registerSaveHandlers();
+  registerDesktopIconHandlers();
   overlayWindow = createOverlayWindow();
   createTray(overlayWindow);
 
@@ -75,8 +77,10 @@ app.whenReady().then(() => {
   }
 });
 
-app.on('before-quit', () => {
+app.on('before-quit', async () => {
   (app as { isQuitting: boolean }).isQuitting = true;
+  // Restore desktop icons to original positions on exit
+  await restoreIconsOnExit();
 });
 
 app.on('window-all-closed', () => {
